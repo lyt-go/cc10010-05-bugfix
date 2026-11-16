@@ -1,4 +1,7 @@
-"""依赖解析接口：维护依赖关系，覆盖提交关系评审、生效关系、解除关系等动作。"""
+"""依赖解析接口：维护依赖关系，覆盖提交关系评审、生效关系、解除关系等动作。
+
+清单里的编排拓扑投影只来自编排图的已发布快照；导出与列表使用同一份快照口径。
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -6,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
+from app.services import topology
 from app.services.dependency import DependencyService
 
 router = APIRouter(prefix="/api/dependency", tags=["依赖解析"])
@@ -20,14 +24,29 @@ STATUSES = ["草稿", "关系评审中", "已生效", "已解除"]
 def list_entries(
     keyword: str | None = Query(default=None, description="按关系编号检索"),
     status: str | None = Query(default=None, description="草稿、关系评审中、已生效、已解除"),
+    source: str | None = Query(default=None, description="按来源模块过滤，例如 任务编排发布"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按关系编号与状态过滤依赖解析列表；没有数据时返回空页，不报错。"""
+    """按关系编号、状态与来源过滤依赖解析列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(keyword=keyword, status=status, source=source, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出依赖解析清单：返回当前已发布拓扑对应的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "dependency", "total": total, "items": items}
+
+
+@router.get("/topologies", response_model=dict)
+def published_topologies() -> dict[str, Any]:
+    """依赖解析消费方入口：只返回当前已发布的编排拓扑快照，供对侧重算上下游触发。"""
+    items = topology.published_topologies()
+    return {"module": "dependency", "total": len(items), "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +75,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出依赖解析清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "dependency", "total": total, "items": items}

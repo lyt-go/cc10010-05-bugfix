@@ -31,12 +31,20 @@
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
+          <th>发布状态</th>
+          <th>来源编排图</th>
           <th>可执行动作</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
           <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td>
+            <span>{{ row['发布状态'] ?? '—' }}</span>
+            <span v-if="row['来源发布版本']"> / v{{ row['来源发布版本'] }}</span>
+            <span v-if="row['来源编排图ID'] && !row['拓扑可用']" class="error-text"> · 拓扑不可用</span>
+          </td>
+          <td>{{ row['来源图编号'] ?? '手工登记' }}</td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -50,7 +58,7 @@
           </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 1" class="empty-state">暂无依赖解析数据，可先登记依赖关系</td>
+          <td :colspan="columns.length + 3" class="empty-state">暂无依赖解析数据，可先登记依赖关系</td>
         </tr>
       </tbody>
     </table>
@@ -63,7 +71,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { request } from '@/api/client'
 
@@ -73,10 +81,18 @@ const ENDPOINT = '/api/dependency'
 const columns = ["关系编号", "上游作业", "下游作业", "依赖类型", "偏移量分钟", "触发条件", "等待超时", "跳过标志"]
 const actions = ["提交关系评审", "生效关系", "解除关系"]
 const statuses = ["草稿", "关系评审中", "已生效", "已解除"]
-const stats = [{"label": "依赖关系总数", "value": 0}, {"label": "已生效关系", "value": 0}, {"label": "评审中关系", "value": 0}]
+const statLabels = ["依赖关系总数", "已生效关系", "评审中关系"]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
+const stats = computed(() => {
+  const values = [
+    total.value,
+    rows.value.filter((row) => row.status === '已生效').length,
+    rows.value.filter((row) => row.status === '关系评审中').length,
+  ]
+  return statLabels.map((label, index) => ({ label, value: values[index] }))
+})
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
 const filterFields = columns.slice(0, 3)
@@ -101,8 +117,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('依赖解析动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.message || '依赖解析动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
